@@ -1,6 +1,4 @@
-.streamlit/
 *.csv
-.data/
 __pycache__/
 *.pyc
 *.pyo
@@ -16,3 +14,5 @@ Thumbs.db
 *.swp
 *.swo
 *.log
+secrets.json
+service_account.json
