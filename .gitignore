@@ -1,15 +1,16 @@
-# GİZLENECEK DOSYALAR
-
-# 1. Şifreler ve ayarlar
+# Şifreler ve ayarlar
 .streamlit/
 
-# 2. Veritabanı dosyaları
-beykoz_veritabani_v2.csv
+# Veritabanı
 *.csv
-
-# 3. Gizli veri klasörü
 .data/
 
-# 4. Python geçici dosyaları
+# Python geçici dosyaları
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+.Python
+.env
+.venv
+venv/
