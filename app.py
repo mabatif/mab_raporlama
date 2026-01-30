@@ -6,9 +6,34 @@ import time
 import base64
 import os
 
-# ==== 2. GOOGLE SHEETS AYARLARI ====
-GOOGLE_SHEET_ID = st.secrets["google"]["sheet_id"]
-SHEET_NAME = "Beykoz_Verileri"
+# ==== 2. GSPREAD KONTROLÜ ====
+try:
+    import gspread
+    from google.oauth2.service_account import Credentials
+    GSPREAD_AVAILABLE = True
+except ImportError:
+    GSPREAD_AVAILABLE = False
+    st.warning("⚠️ Google Sheets bağlantısı için paketler yükleniyor...")
+    st.info("""
+    **Gerekli paketler:**
+    ```
+    gspread==5.11.0
+    oauth2client==4.1.3
+    google-auth==2.23.0
+    ```
+    Lütfen 'gereksinimler.txt' dosyasını kontrol edin.
+    """)
+
+# ==== 3. GOOGLE SHEETS AYARLARI ====
+if GSPREAD_AVAILABLE:
+    try:
+        GOOGLE_SHEET_ID = st.secrets["google"]["sheet_id"]
+        SHEET_NAME = "Beykoz_Verileri"
+    except:
+        GOOGLE_SHEET_ID = None
+        SHEET_NAME = "Beykoz_Verileri"
+else:
+    GOOGLE_SHEET_ID = None
 
 # ==== 3. GOOGLE SHEETS BAĞLANTISI ====
 @st.cache_resource
@@ -660,3 +685,4 @@ cikis_butonu()
 # ALT BİLGİ
 st.markdown("---")
 st.caption(f"© 2026 MAB Tarafından Geliştirildi. • V2.0 Google Sheets Entegrasyonu • Son güncelleme: {datetime.now().strftime('%H:%M')}")
+
