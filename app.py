@@ -5,12 +5,6 @@ from datetime import date, datetime, timedelta
 import io
 import time
 
-# FPDF için
-try:
-    from fpdf import FPDF
-except ImportError:
-    st.error("Lütfen 'gereksinimler.txt' dosyasındaki paketleri yükleyin: pip install -r gereksinimler.txt")
-    st.stop()
 
 # ==== 2. GÜVENLİ VERİTABANI YOLU ====
 # Veriler gizli klasörde saklanacak
@@ -651,4 +645,5 @@ cikis_butonu_ekle()
 
 # ==== ALT BİLGİ ====
 st.markdown("---")
+
 st.caption(f"© 2026 MAB • Kullanıcı: {st.session_state.kullanici_isim} • Son güncelleme: {datetime.now().strftime('%d.%m.%Y %H:%M')}")
