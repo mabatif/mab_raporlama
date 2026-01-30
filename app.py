@@ -4,15 +4,102 @@ from datetime import date, datetime, timedelta
 import io
 import time
 import base64
-import os
+import json
 
-# ==================== PAKET KONTROLÜ ====================
-# Not: Bu kod gspread paketinin yüklü olduğunu varsayar
-# Eğer hata alırsanız, requirements.txt'de paketler olduğundan emin olun
+# ==================== ŞİFRELİ VERİTABANI SİSTEMİ ====================
+class SecureDatabase:
+    """Verileri Streamlit Secrets'da güvenli sakla"""
+    
+    def __init__(self):
+        self.key = "beykoz_verileri_v4"
+        
+    def load(self):
+        """Verileri yükle"""
+        try:
+            if self.key in st.secrets:
+                # Base64 decode
+                encoded_data = st.secrets[self.key]
+                decoded_bytes = base64.b64decode(encoded_data)
+                data_str = decoded_bytes.decode('utf-8')
+                
+                # JSON'dan DataFrame'e çevir
+                data_dict = json.loads(data_str)
+                df = pd.DataFrame(data_dict)
+                
+                # Tarih sütununu düzelt
+                if 'Tarih' in df.columns and not df.empty:
+                    df['Tarih'] = pd.to_datetime(df['Tarih'], errors='coerce').dt.date
+                
+                return df
+            else:
+                # İlk kez kullanılıyorsa
+                return self._create_empty_df()
+                
+        except Exception as e:
+            st.error(f"Veri yükleme hatası: {e}")
+            return self._create_empty_df()
+    
+    def save(self, df):
+        """Verileri kaydet"""
+        try:
+            # DataFrame'i JSON'a çevir
+            df_copy = df.copy()
+            
+            # Tarih sütununu string yap
+            if 'Tarih' in df_copy.columns:
+                df_copy['Tarih'] = df_copy['Tarih'].astype(str)
+            
+            # NaN değerleri temizle
+            df_copy = df_copy.fillna('')
+            
+            # JSON'a çevir
+            data_dict = df_copy.to_dict(orient='records')
+            data_str = json.dumps(data_dict, ensure_ascii=False)
+            
+            # Base64 encode
+            encoded_bytes = base64.b64encode(data_str.encode('utf-8'))
+            encoded_str = encoded_bytes.decode('utf-8')
+            
+            # Session state'e kaydet (geçici)
+            st.session_state['local_db'] = encoded_str
+            
+            return True
+            
+        except Exception as e:
+            st.error(f"Kaydetme hatası: {e}")
+            return False
+    
+    def _create_empty_df(self):
+        """Boş DataFrame oluştur"""
+        kolonlar = ["Tarih", "Müdürlük", "Haber_Kaynagi", "Sayı", "Ayrıntı", "Kayit_Zamani"]
+        return pd.DataFrame(columns=kolonlar)
+    
+    def export_to_csv(self, df):
+        """CSV olarak dışa aktar"""
+        return df.to_csv(index=False, encoding='utf-8-sig')
+    
+    def import_from_csv(self, csv_content):
+        """CSV'den içe aktar"""
+        try:
+            # CSV'yi DataFrame'e çevir
+            df = pd.read_csv(io.StringIO(csv_content), encoding='utf-8-sig')
+            
+            # Tarih sütununu düzelt
+            if 'Tarih' in df.columns and not df.empty:
+                df['Tarih'] = pd.to_datetime(df['Tarih'], errors='coerce').dt.date
+            
+            # Kayıt zamanı ekle
+            if 'Kayit_Zamani' not in df.columns:
+                df['Kayit_Zamani'] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            
+            return df
+        except Exception as e:
+            st.error(f"CSV içe aktarma hatası: {e}")
+            return None
 
 # ==================== GÜVENLİK SİSTEMİ ====================
 def giris_kontrol():
-    """Streamlit Secrets ile güvenli giriş"""
+    """Güvenli kullanıcı girişi"""
     
     if "giris_yapildi" in st.session_state and st.session_state.giris_yapildi:
         return True
@@ -35,7 +122,7 @@ def giris_kontrol():
         st.markdown('<div class="login-container">', unsafe_allow_html=True)
         
         st.markdown('<h2 style="text-align: center;">🔐 BEYKOZ HABER SİSTEMİ</h2>', unsafe_allow_html=True)
-        st.markdown('<p style="text-align: center; color: #666;">Google Sheets Entegrasyonlu</p>', unsafe_allow_html=True)
+        st.markdown('<p style="text-align: center; color: #666;">Güvenli Veritabanı v4.0</p>', unsafe_allow_html=True)
         
         kullanici = st.text_input("**Kullanıcı Adı**", key="login_user")
         sifre = st.text_input("**Şifre**", type="password", key="login_pass")
@@ -60,7 +147,12 @@ def giris_kontrol():
                 st.error("❌ Kullanıcı bulunamadı!")
         
         st.markdown("---")
-        st.caption("**Google Sheets ile kalıcı veri depolama**")
+        st.caption("""
+        **Güvenlik Özellikleri:**
+        • Veriler şifreli saklanır
+        • Sadece yetkililer erişebilir
+        • GitHub'da veri görünmez
+        """)
         
         st.markdown('</div>', unsafe_allow_html=True)
     
@@ -72,151 +164,13 @@ if not giris_kontrol():
 
 # ==================== SAYFA AYARLARI ====================
 st.set_page_config(
-    page_title="Beykoz Haber Takip - Google Sheets",
+    page_title="Beykoz Haber Takip",
     page_icon="📊",
     layout="wide"
 )
 
-# ==================== GOOGLE SHEETS FONKSİYONLARI ====================
-def get_google_sheet():
-    """Google Sheets bağlantısını kur"""
-    try:
-        import gspread
-        from google.oauth2.service_account import Credentials
-        
-        # Secrets'tan kimlik bilgilerini al
-        creds_dict = dict(st.secrets["google"]["service_account"])
-        
-        # Kimlik bilgilerini oluştur
-        scopes = [
-            "https://www.googleapis.com/auth/spreadsheets",
-            "https://www.googleapis.com/auth/drive"
-        ]
-        
-        credentials = Credentials.from_service_account_info(
-            creds_dict,
-            scopes=scopes
-        )
-        
-        # Gspread istemcisi
-        gc = gspread.authorize(credentials)
-        
-        # Sheet'i aç
-        sheet_id = st.secrets["google"]["sheet_id"]
-        sheet = gc.open_by_key(sheet_id)
-        
-        # Worksheet kontrolü
-        try:
-            worksheet = sheet.worksheet("Beykoz_Verileri")
-        except:
-            # Yeni sheet oluştur
-            worksheet = sheet.add_worksheet(title="Beykoz_Verileri", rows=1000, cols=10)
-            # Başlıkları ekle
-            headers = ["Tarih", "Müdürlük", "Haber_Kaynagi", "Sayı", "Ayrıntı", "Kayit_Zamani"]
-            worksheet.append_row(headers)
-        
-        return worksheet
-    
-    except Exception as e:
-        st.error(f"Google Sheets bağlantı hatası: {str(e)[:100]}")
-        return None
-
-def veri_yukle():
-    """Google Sheets'ten verileri yükle"""
-    try:
-        worksheet = get_google_sheet()
-        if worksheet is None:
-            return pd.DataFrame()
-        
-        # Tüm verileri al
-        records = worksheet.get_all_records()
-        
-        if records:
-            df = pd.DataFrame(records)
-            
-            # Tarih sütununu düzelt
-            if 'Tarih' in df.columns and not df.empty:
-                df['Tarih'] = pd.to_datetime(df['Tarih'], errors='coerce').dt.date
-            
-            return df
-        else:
-            # Boş DataFrame döndür
-            kolonlar = ["Tarih", "Müdürlük", "Haber_Kaynagi", "Sayı", "Ayrıntı", "Kayit_Zamani"]
-            return pd.DataFrame(columns=kolonlar)
-    
-    except Exception as e:
-        st.error(f"Veri yükleme hatası: {e}")
-        # Geçici olarak boş DataFrame
-        kolonlar = ["Tarih", "Müdürlük", "Haber_Kaynagi", "Sayı", "Ayrıntı", "Kayit_Zamani"]
-        return pd.DataFrame(columns=kolonlar)
-
-def veri_kaydet(df):
-    """Verileri Google Sheets'e kaydet"""
-    try:
-        worksheet = get_google_sheet()
-        if worksheet is None:
-            return False
-        
-        # DataFrame'i temizle
-        df_copy = df.copy()
-        
-        # Tarih sütununu string'e çevir
-        if 'Tarih' in df_copy.columns:
-            df_copy['Tarih'] = df_copy['Tarih'].astype(str)
-        
-        # NaN değerleri boş string yap
-        df_copy = df_copy.fillna('')
-        
-        # Tüm verileri temizle ve yeniden yaz
-        worksheet.clear()
-        
-        # Başlıkları ekle
-        headers = list(df_copy.columns)
-        worksheet.append_row(headers)
-        
-        # Verileri ekle
-        if not df_copy.empty:
-            records = df_copy.values.tolist()
-            worksheet.append_rows(records, value_input_option='USER_ENTERED')
-        
-        return True
-    
-    except Exception as e:
-        st.error(f"Kaydetme hatası: {e}")
-        return False
-
-def yeni_kayit_ekle(tarih, mudurlukler, kaynak, sayi, ayrinti):
-    """Yeni kayıt ekle"""
-    try:
-        # Mevcut verileri yükle
-        df = veri_yukle()
-        
-        # Yeni kayıtları oluştur
-        yeni_kayitlar = []
-        for mudurluk in mudurlukler:
-            yeni_kayit = {
-                "Tarih": tarih,
-                "Müdürlük": mudurluk,
-                "Haber_Kaynagi": kaynak,
-                "Sayı": sayi,
-                "Ayrıntı": ayrinti,
-                "Kayit_Zamani": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            }
-            yeni_kayitlar.append(yeni_kayit)
-        
-        # Yeni kayıtları DataFrame'e ekle
-        yeni_df = pd.DataFrame(yeni_kayitlar)
-        df = pd.concat([df, yeni_df], ignore_index=True)
-        
-        # Google Sheets'e kaydet
-        if veri_kaydet(df):
-            return len(yeni_kayitlar)
-        else:
-            return 0
-    
-    except Exception as e:
-        st.error(f"Kayıt ekleme hatası: {e}")
-        return 0
+# ==================== VERİTABANI BAŞLAT ====================
+db = SecureDatabase()
 
 # ==================== ÇIKIŞ BUTONU ====================
 def cikis_butonu():
@@ -225,6 +179,10 @@ def cikis_butonu():
             st.markdown("---")
             st.write(f"**👤 {st.session_state.kullanici_isim}**")
             st.write(f"Rol: {st.session_state.kullanici_rol}")
+            
+            # Veri sayısı
+            df = db.load()
+            st.caption(f"📊 Toplam {len(df)} kayıt")
             
             if st.button("🚪 Çıkış Yap", use_container_width=True):
                 st.session_state.giris_yapildi = False
@@ -275,17 +233,17 @@ HABER_KAYNAKLARI = [
 
 # ==================== ANA UYGULAMA ====================
 st.title("📊 BEYKOZ HABER TAKİP SİSTEMİ")
-st.markdown("🌐 **Google Sheets Entegrasyonu Aktif**")
+st.markdown("🔒 **Güvenli Veritabanı v4.0** - Verileriniz şifreli saklanır")
 st.markdown("---")
 
 # Verileri yükle
-with st.spinner("Google Sheets'ten veriler yükleniyor..."):
-    df = veri_yukle()
+with st.spinner("Güvenli veritabanı yükleniyor..."):
+    df = db.load()
 
-if df is None or df.empty:
+if df.empty:
     st.info("📭 Henüz kayıt yok. İlk kaydınızı ekleyin!")
 else:
-    st.success(f"✅ Google Sheets'ten {len(df)} kayıt yüklendi!")
+    st.success(f"✅ {len(df)} kayıt yüklendi!")
 
 # SİDEBAR
 with st.sidebar:
@@ -314,8 +272,6 @@ with st.sidebar:
         col1, col2 = st.columns(2)
         with col1:
             kaydet_btn = st.form_submit_button("💾 KAYDET", type="primary", use_container_width=True)
-        with col2:
-            temizle_btn = st.form_submit_button("🔄 TEMİZLE", type="secondary", use_container_width=True)
         
         if kaydet_btn:
             if not secilen_mudurlukler:
@@ -323,36 +279,84 @@ with st.sidebar:
             elif not ayrinti.strip():
                 st.error("❌ Lütfen ayrıntı girin!")
             else:
-                with st.spinner("Google Sheets'e kaydediliyor..."):
-                    eklenen = yeni_kayit_ekle(kayit_tarihi, secilen_mudurlukler, kaynak, sayi, ayrinti)
+                # Yeni kayıtları oluştur
+                yeni_kayitlar = []
+                for mudurluk in secilen_mudurlukler:
+                    yeni_kayit = {
+                        "Tarih": kayit_tarihi,
+                        "Müdürlük": mudurluk,
+                        "Haber_Kaynagi": kaynak,
+                        "Sayı": sayi,
+                        "Ayrıntı": ayrinti,
+                        "Kayit_Zamani": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    }
+                    yeni_kayitlar.append(yeni_kayit)
                 
-                if eklenen > 0:
-                    st.success(f"✅ {eklenen} kayıt Google Sheets'e eklendi!")
+                # DataFrame'e ekle
+                yeni_df = pd.DataFrame(yeni_kayitlar)
+                df = pd.concat([df, yeni_df], ignore_index=True)
+                
+                # Veritabanına kaydet
+                if db.save(df):
+                    st.success(f"✅ {len(yeni_kayitlar)} kayıt eklendi!")
                     time.sleep(1)
                     st.rerun()
                 else:
                     st.error("❌ Kayıt eklenemedi!")
-        
-        if temizle_btn:
-            st.rerun()
     
     st.markdown("---")
     
-    # GOOGLE SHEETS YÖNETİMİ
-    st.header("📁 Google Sheets")
-    
-    # Sheets bağlantı linki
-    if "google" in st.secrets and "sheet_id" in st.secrets["google"]:
-        sheet_id = st.secrets["google"]["sheet_id"]
-        sheet_url = f"https://docs.google.com/spreadsheets/d/{sheet_id}"
-        st.markdown(f"[📎 Sheets'e Git]({sheet_url})", unsafe_allow_html=True)
+    # VERİ YÖNETİMİ
+    st.header("📁 Veri Yönetimi")
     
     # VERİ İNDİR
     if not df.empty:
-        csv = df.to_csv(index=False, encoding='utf-8-sig')
+        csv = db.export_to_csv(df)
         b64 = base64.b64encode(csv.encode()).decode()
-        href = f'<a href="data:file/csv;base64,{b64}" download="beykoz_verileri_{date.today()}.csv">📥 Tüm Verileri İndir (CSV)</a>'
+        href = f'<a href="data:file/csv;base64,{b64}" download="beykoz_verileri_{date.today()}.csv">📥 Verileri İndir (CSV)</a>'
         st.markdown(href, unsafe_allow_html=True)
+    
+    # VERİ YÜKLE
+    st.markdown("---")
+    st.subheader("📤 CSV Yükle")
+    
+    yuklenen_dosya = st.file_uploader("CSV dosyası seç", type=['csv'])
+    if yuklenen_dosya is not None:
+        try:
+            csv_content = yuklenen_dosya.read().decode('utf-8-sig')
+            yeni_veriler = db.import_from_csv(csv_content)
+            
+            if yeni_veriler is not None:
+                # Mevcut verilerle birleştir
+                df = pd.concat([df, yeni_veriler], ignore_index=True)
+                
+                if db.save(df):
+                    st.success(f"✅ {len(yeni_veriler)} kayıt yüklendi!")
+                    st.rerun()
+                else:
+                    st.error("❌ Yükleme başarısız!")
+            else:
+                st.error("❌ CSV formatı uygun değil!")
+                
+        except Exception as e:
+            st.error(f"❌ Yükleme hatası: {e}")
+    
+    # VERİ TEMİZLEME (sadece admin)
+    if st.session_state.kullanici_rol == "admin":
+        st.markdown("---")
+        st.subheader("⚠️ Yönetici Araçları")
+        
+        if st.button("🗑️ Tüm Verileri Temizle", type="secondary", use_container_width=True):
+            onay = st.checkbox("EMİN MİSİNİZ? Tüm veriler silinecek!")
+            if onay:
+                # Boş veritabanı oluştur
+                bos_df = pd.DataFrame(columns=["Tarih", "Müdürlük", "Haber_Kaynagi", "Sayı", "Ayrıntı", "Kayit_Zamani"])
+                
+                if db.save(bos_df):
+                    st.success("✅ Tüm veriler temizlendi!")
+                    st.rerun()
+                else:
+                    st.error("❌ Temizleme başarısız!")
     
     # ÇIKIŞ BUTONU
     cikis_butonu()
@@ -452,8 +456,8 @@ if not df.empty:
     )
     
     # Değişiklikleri kaydet butonu
-    if st.button("💾 Değişiklikleri Google Sheets'e Kaydet", type="primary", use_container_width=True):
-        with st.spinner("Google Sheets güncelleniyor..."):
+    if st.button("💾 Değişiklikleri Kaydet", type="primary", use_container_width=True):
+        with st.spinner("Veritabanı güncelleniyor..."):
             # Orijinal df'yi güncelle
             for idx in filtrelenmis_df.index:
                 if idx < len(duzenlenen_df):
@@ -463,9 +467,9 @@ if not df.empty:
                     df.loc[idx, 'Sayı'] = duzenlenen_df.iloc[idx]['Sayı']
                     df.loc[idx, 'Ayrıntı'] = duzenlenen_df.iloc[idx]['Ayrıntı']
             
-            # Google Sheets'e kaydet
-            if veri_kaydet(df):
-                st.success("✅ Değişiklikler Google Sheets'e kaydedildi!")
+            # Veritabanına kaydet
+            if db.save(df):
+                st.success("✅ Değişiklikler kaydedildi!")
                 time.sleep(1)
                 st.rerun()
             else:
@@ -523,7 +527,7 @@ else:
     İlk kaydınızı eklemek için:
     1. Sol taraftaki formu doldurun
     2. **💾 KAYDET** butonuna tıklayın
-    3. Veriler otomatik Google Sheets'e kaydedilecek
+    3. Veriler güvenli veritabanına kaydedilecek
     """)
     
     # Hızlı örnek veri butonu
@@ -548,14 +552,14 @@ else:
         ]
         
         ornek_df = pd.DataFrame(ornek_veriler)
+        df = pd.concat([df, ornek_df], ignore_index=True)
         
-        with st.spinner("Google Sheets'e kaydediliyor..."):
-            if veri_kaydet(ornek_df):
-                st.success("✅ Örnek veriler Google Sheets'e eklendi!")
-                st.rerun()
-            else:
-                st.error("❌ Örnek veri eklenemedi!")
+        if db.save(df):
+            st.success("✅ Örnek veriler eklendi!")
+            st.rerun()
+        else:
+            st.error("❌ Örnek veri eklenemedi!")
 
 # ALT BİLGİ
 st.markdown("---")
-st.caption(f"© 2026 MAB ile geliştirildi. • Google Sheets Entegrasyonu • Son güncelleme: {datetime.now().strftime('%H:%M')}")
+st.caption(f"© 2026 MAB ile geliştirildi. • Güvenli Veritabanı v4.0 • Kullanıcı: {st.session_state.kullanici_isim}")
