@@ -1,44 +1,9 @@
-# Streamlit ayarları
 .streamlit/
-
-# Veritabanı dosyaları
 *.csv
-beykoz_verileri.csv
-beykoz_veritabani.csv
-beykoz_data.csv
-
-# Python geçici dosyaları
+*.bin
 __pycache__/
 *.pyc
-*.pyo
-*.pyd
-.Python
-
-# Sanal ortamlar
 .env
 .venv
-venv/
-env/
-
-# İşletim sistemi dosyaları
 .DS_Store
-Thumbs.db
-
-# IDE dosyaları
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# Log dosyaları
-*.log
-
-# Google Service Account
-secrets.json
-service_account.json
-*.json
-
-# Diğer
-*.db
-*.sqlite
-*.sqlite3
+beykoz_data_encrypted.bin
