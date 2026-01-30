@@ -35,15 +35,30 @@ if GSPREAD_AVAILABLE:
 else:
     GOOGLE_SHEET_ID = None
 
-# ==== 3. GOOGLE SHEETS BAĞLANTISI ====
+# ==== 4. GOOGLE SHEETS BAĞLANTISI ====
 @st.cache_resource
 def get_google_sheet():
     """Google Sheets bağlantısını kur"""
+    
+    if not GSPREAD_AVAILABLE:
+        st.error("❌ 'gspread' paketi yüklü değil!")
+        st.info("""
+        Lütfen 'gereksinimler.txt' dosyasına şu paketleri ekleyin:
+        ```
+        gspread==5.11.0
+        oauth2client==4.1.3
+        google-auth==2.23.0
+        ```
+        Sonra Streamlit Cloud'da 'Redeploy' yapın.
+        """)
+        return None
+    
     try:
-        import gspread
-        from google.oauth2.service_account import Credentials
-        
         # Streamlit Secrets'tan kimlik bilgilerini al
+        if "google" not in st.secrets:
+            st.error("❌ Google Sheets ayarları bulunamadı!")
+            return None
+        
         creds_dict = dict(st.secrets["google"]["service_account"])
         
         # Kimlik bilgilerini oluştur
@@ -685,4 +700,5 @@ cikis_butonu()
 # ALT BİLGİ
 st.markdown("---")
 st.caption(f"© 2026 MAB Tarafından Geliştirildi. • V2.0 Google Sheets Entegrasyonu • Son güncelleme: {datetime.now().strftime('%H:%M')}")
+
 
