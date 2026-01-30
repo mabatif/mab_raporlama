@@ -1,9 +1,12 @@
-.streamlit/
-*.csv
-*.bin
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+.Python
 .env
 .venv
+venv/
 .DS_Store
-beykoz_data_encrypted.bin
+Thumbs.db
+*.log
+/data/
