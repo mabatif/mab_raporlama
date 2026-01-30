@@ -16,3 +16,4 @@ Thumbs.db
 *.log
 secrets.json
 service_account.json
+beykoz_veritabani.csv
