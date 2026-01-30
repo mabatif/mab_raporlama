@@ -2,91 +2,78 @@ import streamlit as st
 import pandas as pd
 from datetime import date, datetime, timedelta
 import io
-import time
-import base64
 import json
+import base64
 import os
 
-# ==================== ŞİFRELİ VERİTABANI ====================
-class SecureDatabaseV1:
-    """V1.3 - Şifreli veritabanı sistemi"""
+# ===== RAILWAY OPTIMIZATION =====
+# Railway'de stable çalışması için
+st.set_page_config(
+    page_title="Beykoz Haber Takip",
+    page_icon="📊",
+    layout="wide",
+    initial_sidebar_state="expanded",
+    menu_items={
+        'Get Help': 'https://t.me/beykozdestek',
+        'Report a bug': None,
+        'About': "Beykoz Belediyesi Haber Takip Sistemi v1.0"
+    }
+)
+
+# ===== VERİTABANI SİSTEMİ (Railway için) =====
+class RailwayDatabase:
+    """Railway'de çalışan veritabanı"""
     
     def __init__(self):
-        self.local_file = "beykoz_data_encrypted.bin"
-        self.secrets_key = "beykoz_v1_data"
+        # Railway environment variable kullan
+        self.db_file = os.getenv("RAILWAY_VOLUME_MOUNT_PATH", "/data/beykoz_db.json")
+        self.ensure_directory()
+    
+    def ensure_directory(self):
+        """Dizin yoksa oluştur"""
+        directory = os.path.dirname(self.db_file)
+        if directory and not os.path.exists(directory):
+            os.makedirs(directory, exist_ok=True)
     
     def load(self):
-        """Verileri yükle - Önce secrets, sonra local"""
+        """Verileri yükle"""
         try:
-            # 1. ÖNCE STREAMLIT SECRETS'DAN DENE
-            if self.secrets_key in st.secrets:
-                return self._load_from_secrets()
-            
-            # 2. SONRA LOCAL DOSYADAN DENE
-            elif os.path.exists(self.local_file):
-                return self._load_from_local()
-            
-            # 3. HİÇBİRİ YOKSA BOŞ DF
+            if os.path.exists(self.db_file):
+                with open(self.db_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                
+                df = pd.DataFrame(data)
+                
+                # Tarih formatını düzelt
+                if 'Tarih' in df.columns and not df.empty:
+                    df['Tarih'] = pd.to_datetime(df['Tarih'], errors='coerce').dt.date
+                
+                return df
             else:
-                return self._create_empty_df()
+                return self._create_empty()
                 
         except Exception as e:
             st.error(f"Veri yükleme hatası: {e}")
-            return self._create_empty_df()
+            return self._create_empty()
     
-    def _load_from_secrets(self):
-        """Secrets'tan yükle (BASE64 + JSON)"""
-        encoded_data = st.secrets[self.secrets_key]
-        decoded_bytes = base64.b64decode(encoded_data)
-        data_str = decoded_bytes.decode('utf-8')
-        data_dict = json.loads(data_str)
-        
-        df = pd.DataFrame(data_dict)
-        if 'Tarih' in df.columns and not df.empty:
-            df['Tarih'] = pd.to_datetime(df['Tarih'], errors='coerce').dt.date
-        
-        return df
-    
-    def _load_from_local(self):
-        """Local dosyadan yükle"""
-        with open(self.local_file, 'rb') as f:
-            encoded_data = f.read()
-        
-        decoded_bytes = base64.b64decode(encoded_data)
-        data_str = decoded_bytes.decode('utf-8')
-        data_dict = json.loads(data_str)
-        
-        df = pd.DataFrame(data_dict)
-        if 'Tarih' in df.columns and not df.empty:
-            df['Tarih'] = pd.to_datetime(df['Tarih'], errors='coerce').dt.date
-        
-        return df
-    
-    def save(self, df, save_to_local=True):
+    def save(self, df):
         """Verileri kaydet"""
         try:
-            # DataFrame'i hazırla
+            # DataFrame'i temizle
             df_copy = df.copy()
+            
+            # Tarih sütununu string yap
             if 'Tarih' in df_copy.columns:
                 df_copy['Tarih'] = df_copy['Tarih'].astype(str)
             
+            # NaN değerleri temizle
             df_copy = df_copy.fillna('')
             
-            # JSON'a çevir
-            data_dict = df_copy.to_dict(orient='records')
-            data_str = json.dumps(data_dict, ensure_ascii=False)
+            # JSON'a çevir ve kaydet
+            data = df_copy.to_dict(orient='records')
             
-            # Base64 encode
-            encoded_bytes = base64.b64encode(data_str.encode('utf-8'))
-            encoded_str = encoded_bytes.decode('utf-8')
-            
-            # LOCAL'E KAYDET (otomatik yedek)
-            if save_to_local:
-                with open(self.local_file, 'wb') as f:
-                    f.write(encoded_bytes)
-            
-            # SESSION STATE'E KAYDET (geçici)
-            st.session_state['local_cache'] = encoded_str
+            with open(self.db_file, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
             
             return True
             
@@ -94,179 +81,447 @@ class SecureDatabaseV1:
             st.error(f"Kaydetme hatası: {e}")
             return False
     
-    def _create_empty_df(self):
+    def _create_empty(self):
         """Boş DataFrame oluştur"""
-        columns = ["Tarih", "Müdürlük", "Kaynak", "Sayı", "Ayrıntı", "Kayit_Zamani"]
+        columns = ["Tarih", "Müdürlük", "Haber_Kaynagi", "Sayı", "Ayrıntı", "Kayit_Zamani"]
         return pd.DataFrame(columns=columns)
     
-    def export_csv(self, df):
-        """CSV olarak dışa aktar"""
-        return df.to_csv(index=False, encoding='utf-8-sig')
-    
-    def backup_to_secrets_format(self, df):
-        """Secrets formatına çevir (manuel kopyala-yapıştır için)"""
-        df_copy = df.copy()
-        if 'Tarih' in df_copy.columns:
-            df_copy['Tarih'] = df_copy['Tarih'].astype(str)
+    def add_record(self, tarih, mudurlukler, kaynak, sayi, ayrinti):
+        """Yeni kayıt ekle"""
+        df = self.load()
         
-        df_copy = df_copy.fillna('')
-        data_dict = df_copy.to_dict(orient='records')
-        data_str = json.dumps(data_dict, ensure_ascii=False)
-        encoded_bytes = base64.b64encode(data_str.encode('utf-8'))
-        encoded_str = encoded_bytes.decode('utf-8')
-        
-        return f'beykoz_v1_data = "{encoded_str}"'
-
-# ==================== GÜVENLİK SİSTEMİ ====================
-def check_login_v1():
-    """V1.3 güvenlik sistemi"""
-    
-    if "v1_logged_in" in st.session_state and st.session_state.v1_logged_in:
-        return True
-    
-    # BASİT GİRİŞ EKRANI
-    st.title("🔐 Beykoz Haber Takip v1.3")
-    st.markdown("---")
-    
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        username = st.text_input("Kullanıcı Adı")
-        password = st.text_input("Şifre", type="password")
-        
-        if st.button("Giriş Yap", type="primary", use_container_width=True):
-            # Basit kontrol (isterseniz secrets kullanın)
-            if username == "admin" and password == "beykoz2024":
-                st.session_state.v1_logged_in = True
-                st.session_state.v1_user = username
-                st.session_state.v1_role = "admin"
-                st.success("Giriş başarılı!")
-                time.sleep(1)
-                st.rerun()
-            elif username == "user" and password == "user123":
-                st.session_state.v1_logged_in = True
-                st.session_state.v1_user = username
-                st.session_state.v1_role = "user"
-                st.success("Giriş başarılı!")
-                time.sleep(1)
-                st.rerun()
-            else:
-                st.error("Hatalı giriş!")
-    
-    return False
-
-# ==================== ÇALIŞTIR ====================
-if not check_login_v1():
-    st.stop()
-
-# Sayfa ayarları
-st.set_page_config(page_title="Beykoz v1.3", layout="wide")
-
-# Veritabanı başlat
-db = SecureDatabaseV1()
-
-# ==================== ANA UYGULAMA ====================
-st.title("📊 Beykoz Haber Takip Sistemi v1.3")
-st.markdown("🔒 **Şifreli Veritabanı - Google Sheets YOK**")
-st.markdown("---")
-
-# Verileri yükle
-df = db.load()
-
-# SIDEBAR
-with st.sidebar:
-    st.write(f"👤 {st.session_state.v1_user}")
-    
-    # YENİ KAYIT
-    st.header("📝 Yeni Kayıt")
-    with st.form("v1_new"):
-        tarih = st.date_input("Tarih", date.today())
-        mudurluk = st.selectbox("Müdürlük", [
-            "Fen İşleri Müdürlüğü", "Temizlik İşleri Müdürlüğü", 
-            "Zabıta Müdürlüğü", "Diğer"
-        ])
-        kaynak = st.selectbox("Kaynak", [
-            "Beykoz Anlık", "Beykoz Burada", "Diğer"
-        ])
-        sayi = st.number_input("Sayı", min_value=1, value=1)
-        ayrinti = st.text_area("Ayrıntı")
-        
-        if st.form_submit_button("💾 Kaydet"):
-            new_data = {
+        new_records = []
+        for mudurluk in mudurlukler:
+            new_records.append({
                 "Tarih": tarih,
                 "Müdürlük": mudurluk,
-                "Kaynak": kaynak,
+                "Haber_Kaynagi": kaynak,
                 "Sayı": sayi,
                 "Ayrıntı": ayrinti,
                 "Kayit_Zamani": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            }
-            
-            new_df = pd.DataFrame([new_data])
-            df = pd.concat([df, new_df], ignore_index=True)
-            
-            if db.save(df):
-                st.success("Kayıt eklendi!")
-                st.rerun()
+            })
+        
+        new_df = pd.DataFrame(new_records)
+        df = pd.concat([df, new_df], ignore_index=True)
+        
+        return self.save(df), len(new_records)
+
+# ===== GÜVENLİK SİSTEMİ =====
+def railway_auth():
+    """Railway için güvenlik"""
+    
+    if 'rw_logged_in' not in st.session_state:
+        st.session_state.rw_logged_in = False
+        st.session_state.rw_user = None
+        st.session_state.rw_role = None
+    
+    if not st.session_state.rw_logged_in:
+        # GİRİŞ EKRANI
+        st.markdown("""
+        <style>
+        .railway-login {
+            max-width: 500px;
+            margin: 50px auto;
+            padding: 40px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-radius: 20px;
+            color: white;
+            text-align: center;
+        }
+        </style>
+        """, unsafe_allow_html=True)
+        
+        st.markdown('<div class="railway-login">', unsafe_allow_html=True)
+        st.markdown('<h1>🔐 BEYKOZ SİSTEMİ</h1>', unsafe_allow_html=True)
+        st.markdown('<p>Railway.app üzerinde</p>', unsafe_allow_html=True)
+        
+        # Kullanıcı bilgileri
+        username = st.text_input("Kullanıcı Adı", key="rw_user_input")
+        password = st.text_input("Şifre", type="password", key="rw_pass_input")
+        
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col2:
+            if st.button("🚀 GİRİŞ YAP", type="primary", use_container_width=True):
+                # Basit kullanıcı kontrolü
+                users = {
+                    "admin": {"pass": "Beykoz2024!", "role": "admin", "name": "Yönetici"},
+                    "editor": {"pass": "Edit123!", "role": "editor", "name": "Editör"},
+                    "viewer": {"pass": "View456!", "role": "viewer", "name": "Görüntüleyici"}
+                }
+                
+                if username in users and password == users[username]["pass"]:
+                    st.session_state.rw_logged_in = True
+                    st.session_state.rw_user = username
+                    st.session_state.rw_role = users[username]["role"]
+                    st.session_state.rw_name = users[username]["name"]
+                    st.success("Giriş başarılı!")
+                    st.rerun()
+                else:
+                    st.error("Hatalı giriş!")
+        
+        st.markdown("""
+        <br>
+        <p><strong>Demo Kullanıcılar:</strong></p>
+        <p>• admin / Beykoz2024!</p>
+        <p>• editor / Edit123!</p>
+        <p>• viewer / View456!</p>
+        """, unsafe_allow_html=True)
+        
+        st.markdown('</div>', unsafe_allow_html=True)
+        st.stop()
+    
+    return True
+
+# ===== GİRİŞ KONTROLÜ =====
+railway_auth()
+
+# ===== VERİTABANI BAŞLAT =====
+db = RailwayDatabase()
+
+# ===== SİSTEM AYARLARI =====
+MUDURLUKLER = [
+    "Fen İşleri Müdürlüğü",
+    "Temizlik İşleri Müdürlüğü", 
+    "Zabıta Müdürlüğü",
+    "İşletme ve İştirakler Müdürlüğü",
+    "Özel Kalem Müdürlüğü",
+    "Kültür ve Sosyal İşler Müdürlüğü",
+    "Afet İşleri ve Risk Yönetimi Müdürlüğü",
+    "Basın Yayın ve Halkla İlişkiler Müdürlüğü",
+    "Bilgi İşlem Müdürlüğü",
+    "Destek Hizmetleri Müdürlüğü",
+    "Emlak ve İstimlak Müdürlüğü",
+    "Gençlik ve Spor Hizmetleri Müdürlüğü",
+    "Hukuk İşleri Müdürlüğü",
+    "İklim Değişikliği ve Sıfır Atık Müdürlüğü",
+    "İmar ve Şehircilik Müdürlüğü",
+    "İnsan Kaynakları ve Eğitim Müdürlüğü",
+    "Kentsel Dönüşüm Müdürlüğü",
+    "Mali Hizmetler Müdürlüğü",
+    "Muhtarlık İşleri Müdürlüğü",
+    "Park ve Bahçeler Müdürlüğü",
+    "Plan ve Proje Müdürlüğü",
+    "Rehberlik ve Teftiş Kurulu Müdürlüğü",
+    "Ruhsat ve Denetim Müdürlüğü",
+    "Sağlık İşleri Müdürlüğü",
+    "Sosyal Yardım İşleri Müdürlüğü",
+    "Tarımsal Hizmetler Müdürlüğü",
+    "Ulaşım Hizmetleri Müdürlüğü",
+    "Veteriner İşleri Müdürlüğü",
+    "Yapı Kontrol Müdürlüğü",
+    "Yazı İşleri Müdürlüğü",
+    "Diğer"
+]
+
+HABER_KAYNAKLARI = [
+    "Beykoz Anlık", 
+    "Beykoz Burada", 
+    "Beykoz Duysun", 
+    "Beykoz Güncel", 
+    "Diğer"
+]
+
+# ===== ANA UYGULAMA =====
+st.title("📊 BEYKOZ HABER TAKİP SİSTEMİ")
+st.markdown(f"**🚂 Railway.app** • Kullanıcı: {st.session_state.rw_name} ({st.session_state.rw_role})")
+st.markdown("---")
+
+# Verileri yükle
+with st.spinner("Veritabanı yükleniyor..."):
+    df = db.load()
+
+if df.empty:
+    st.info("📭 Henüz kayıt yok. İlk kaydınızı ekleyin!")
+else:
+    st.success(f"✅ {len(df)} kayıt yüklendi!")
+
+# ===== SİDEBAR =====
+with st.sidebar:
+    st.header("📝 Yeni Kayıt")
+    
+    with st.form("railway_new", border=True):
+        tarih = st.date_input("📅 Tarih", value=date.today(), format="DD/MM/YYYY")
+        
+        secilen_mudurlukler = st.multiselect(
+            "🏢 Müdürlükler", 
+            MUDURLUKLER, 
+            placeholder="Seçiniz...",
+            max_selections=5
+        )
+        
+        kaynak = st.selectbox("📱 Kaynak", HABER_KAYNAKLARI)
+        
+        if kaynak == "Diğer":
+            diger_kaynak = st.text_input("✏️ Kaynak Adı", placeholder="Yazın...")
+            if diger_kaynak:
+                kaynak = diger_kaynak
+        
+        sayi = st.number_input("🔢 Sayı", min_value=1, value=1)
+        
+        ayrinti = st.text_area("📝 Ayrıntı", height=120, placeholder="Detaylı açıklama...")
+        
+        if st.form_submit_button("💾 KAYDET", type="primary", use_container_width=True):
+            if not secilen_mudurlukler:
+                st.error("❌ Lütfen en az bir müdürlük seçin!")
+            elif not ayrinti.strip():
+                st.error("❌ Lütfen ayrıntı girin!")
+            else:
+                success, count = db.add_record(tarih, secilen_mudurlukler, kaynak, sayi, ayrinti)
+                if success:
+                    st.success(f"✅ {count} kayıt eklendi!")
+                    st.rerun()
+                else:
+                    st.error("❌ Kayıt eklenemedi!")
+    
+    st.markdown("---")
     
     # VERİ YÖNETİMİ
-    st.markdown("---")
     st.header("📁 Veri Yönetimi")
     
-    # İndirme
+    # CSV İndir
     if not df.empty:
-        csv = db.export_csv(df)
+        csv = df.to_csv(index=False, encoding='utf-8-sig')
         st.download_button(
             "📥 CSV İndir",
             csv,
-            f"beykoz_v1_{date.today()}.csv",
-            "text/csv"
+            f"beykoz_railyway_{date.today()}.csv",
+            "text/csv",
+            use_container_width=True
         )
     
-    # Secrets formatı
-    if st.session_state.v1_role == "admin":
-        st.markdown("---")
-        if st.button("🔑 Secrets Formatını Göster"):
-            secrets_code = db.backup_to_secrets_format(df)
-            st.code(secrets_code, language="toml")
-    
-    # Çıkış
+    # VERİ YÜKLE
     st.markdown("---")
-    if st.button("🚪 Çıkış Yap"):
-        st.session_state.v1_logged_in = False
+    st.subheader("📤 CSV Yükle")
+    
+    uploaded_file = st.file_uploader("CSV dosyası seç", type=['csv'])
+    if uploaded_file is not None:
+        try:
+            yeni_df = pd.read_csv(uploaded_file, encoding='utf-8-sig')
+            
+            # Kolon kontrolü
+            required = ["Tarih", "Müdürlük", "Haber_Kaynagi", "Sayı", "Ayrıntı"]
+            if all(col in yeni_df.columns for col in required):
+                # Mevcut verilerle birleştir
+                df = pd.concat([df, yeni_df], ignore_index=True)
+                
+                if db.save(df):
+                    st.success(f"✅ {len(yeni_df)} kayıt yüklendi!")
+                    st.rerun()
+                else:
+                    st.error("❌ Yükleme başarısız!")
+            else:
+                st.error("❌ CSV formatı uygun değil!")
+                
+        except Exception as e:
+            st.error(f"❌ Hata: {e}")
+    
+    # YÖNETİCİ ARAÇLARI
+    if st.session_state.rw_role == "admin":
+        st.markdown("---")
+        st.subheader("⚠️ Yönetici")
+        
+        if st.button("🗑️ Verileri Temizle", type="secondary", use_container_width=True):
+            if st.checkbox("EMİN MİSİNİZ? Tüm veriler silinecek!"):
+                bos_df = pd.DataFrame(columns=["Tarih", "Müdürlük", "Haber_Kaynagi", "Sayı", "Ayrıntı", "Kayit_Zamani"])
+                if db.save(bos_df):
+                    st.success("✅ Veriler temizlendi!")
+                    st.rerun()
+    
+    # ÇIKIŞ
+    st.markdown("---")
+    if st.button("🚪 Çıkış Yap", type="secondary", use_container_width=True):
+        st.session_state.rw_logged_in = False
         st.rerun()
 
-# ANA EKRAN
+# ===== ANA SAYFA =====
 if not df.empty:
-    # Filtreleme
-    col1, col2 = st.columns(2)
+    # FİLTRELEME
+    st.subheader("🔍 Filtrele")
+    
+    col1, col2, col3, col4 = st.columns(4)
+    
     with col1:
-        start = st.date_input("Başlangıç", date.today() - timedelta(days=30))
+        bas_tarih = st.date_input("Başlangıç", 
+                                 value=date.today() - timedelta(days=30),
+                                 key="bas_tarih_railway")
+    
     with col2:
-        end = st.date_input("Bitiş", date.today())
+        bit_tarih = st.date_input("Bitiş", 
+                                 value=date.today(),
+                                 key="bit_tarih_railway")
+    
+    with col3:
+        filt_mud = st.multiselect("Müdürlük", 
+                                 MUDURLUKLER,
+                                 placeholder="Tümü",
+                                 key="filt_mud_railway")
+    
+    with col4:
+        filt_kaynak = st.multiselect("Kaynak",
+                                    HABER_KAYNAKLARI,
+                                    placeholder="Tümü",
+                                    key="filt_kaynak_railway")
     
     # Filtre uygula
-    mask = (df['Tarih'] >= start) & (df['Tarih'] <= end)
-    filtered_df = df[mask]
+    if not df.empty and 'Tarih' in df.columns:
+        try:
+            mask = (df['Tarih'] >= bas_tarih) & (df['Tarih'] <= bit_tarih)
+            
+            if filt_mud:
+                mask &= df['Müdürlük'].isin(filt_mud)
+            
+            if filt_kaynak:
+                mask &= df['Haber_Kaynagi'].isin(filt_kaynak)
+            
+            filtrelenmis_df = df[mask].copy()
+            
+        except Exception as e:
+            st.error(f"Filtreleme hatası: {e}")
+            filtrelenmis_df = df.copy()
+    else:
+        filtrelenmis_df = df.copy()
     
-    # Göster
-    st.dataframe(filtered_df, use_container_width=True)
+    # İSTATİSTİKLER
+    st.markdown("---")
     
-    # İstatistik
-    st.metric("Toplam Kayıt", len(filtered_df), f"{filtered_df['Sayı'].sum()} toplam sayı")
+    ist1, ist2, ist3, ist4 = st.columns(4)
     
-    # Excel indir
-    excel_buffer = io.BytesIO()
-    with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
-        filtered_df.to_excel(writer, index=False)
-    excel_data = excel_buffer.getvalue()
+    with ist1:
+        toplam_kayit = len(filtrelenmis_df)
+        toplam_sayi = filtrelenmis_df['Sayı'].sum()
+        st.metric("📊 Toplam", toplam_sayi, f"{toplam_kayit} kayıt")
     
-    st.download_button(
-        "📊 Excel İndir",
-        excel_data,
-        f"beykoz_rapor_{date.today()}.xlsx",
-        "application/vnd.ms-excel"
+    with ist2:
+        mud_sayi = filtrelenmis_df['Müdürlük'].nunique()
+        st.metric("🏢 Müdürlük", mud_sayi)
+    
+    with ist3:
+        kaynak_sayi = filtrelenmis_df['Haber_Kaynagi'].nunique()
+        st.metric("📱 Kaynak", kaynak_sayi)
+    
+    with ist4:
+        gun_sayi = filtrelenmis_df['Tarih'].nunique()
+        st.metric("📅 Gün", gun_sayi)
+    
+    # TABLO
+    st.markdown("---")
+    st.subheader("📋 Kayıtlar")
+    
+    # Düzenlenebilir tablo
+    duzenlenen_df = st.data_editor(
+        filtrelenmis_df[['Tarih', 'Müdürlük', 'Haber_Kaynagi', 'Sayı', 'Ayrıntı']],
+        use_container_width=True,
+        hide_index=True,
+        num_rows="dynamic",
+        column_config={
+            "Tarih": st.column_config.DateColumn("Tarih", format="DD/MM/YYYY"),
+            "Müdürlük": st.column_config.SelectboxColumn("Müdürlük", options=MUDURLUKLER),
+            "Haber_Kaynagi": st.column_config.TextColumn("Kaynak"),
+            "Sayı": st.column_config.NumberColumn("Sayı", min_value=1),
+            "Ayrıntı": st.column_config.TextColumn("Ayrıntı", width="large")
+        }
     )
+    
+    # Değişiklikleri kaydet
+    if st.button("💾 Değişiklikleri Kaydet", type="primary", use_container_width=True):
+        # Orijinal df'yi güncelle
+        for idx in filtrelenmis_df.index:
+            if idx < len(duzenlenen_df):
+                df.loc[idx, 'Tarih'] = duzenlenen_df.iloc[idx]['Tarih']
+                df.loc[idx, 'Müdürlük'] = duzenlenen_df.iloc[idx]['Müdürlük']
+                df.loc[idx, 'Haber_Kaynagi'] = duzenlenen_df.iloc[idx]['Haber_Kaynagi']
+                df.loc[idx, 'Sayı'] = duzenlenen_df.iloc[idx]['Sayı']
+                df.loc[idx, 'Ayrıntı'] = duzenlenen_df.iloc[idx]['Ayrıntı']
+        
+        # Kaydet
+        if db.save(df):
+            st.success("✅ Değişiklikler kaydedildi!")
+            st.rerun()
+        else:
+            st.error("❌ Kaydetme başarısız!")
+    
+    # EXCEL İNDİR
+    st.markdown("---")
+    st.subheader("📈 Raporlar")
+    
+    if not filtrelenmis_df.empty:
+        # Excel oluştur
+        excel_buffer = io.BytesIO()
+        with pd.ExcelWriter(excel_buffer, engine='xlsxwriter') as writer:
+            filtrelenmis_df.to_excel(writer, index=False, sheet_name='Rapor')
+            
+            workbook = writer.book
+            worksheet = writer.sheets['Rapor']
+            
+            # Format
+            header_format = workbook.add_format({
+                'bold': True,
+                'bg_color': '#2c3e50',
+                'font_color': 'white',
+                'border': 1
+            })
+            
+            # Sütun genişlikleri
+            worksheet.set_column('A:A', 12)
+            worksheet.set_column('B:B', 25)
+            worksheet.set_column('C:C', 20)
+            worksheet.set_column('D:D', 10)
+            worksheet.set_column('E:E', 50)
+            worksheet.set_column('F:F', 20)
+            
+            # Başlık formatı
+            for col_num, value in enumerate(filtrelenmis_df.columns.values):
+                worksheet.write(0, col_num, value, header_format)
+        
+        excel_data = excel_buffer.getvalue()
+        
+        # İndirme butonu
+        st.download_button(
+            label="📥 Excel Raporu İndir",
+            data=excel_data,
+            file_name=f"beykoz_rapor_{date.today().strftime('%Y%m%d')}.xlsx",
+            mime="application/vnd.ms-excel",
+            use_container_width=True
+        )
 
 else:
-    st.info("Henüz kayıt yok. Sol taraftan yeni kayıt ekleyin.")
+    # VERİ YOKSA
+    st.info("""
+    📭 **Henüz kayıt bulunmuyor.**
+    
+    İlk kaydınızı eklemek için:
+    1. Sol taraftaki formu doldurun
+    2. **💾 KAYDET** butonuna tıklayın
+    """)
+    
+    # Örnek veri butonu
+    if st.button("🚀 Örnek Veri Oluştur"):
+        ornek_veriler = [
+            {
+                "Tarih": date.today(),
+                "Müdürlük": "Fen İşleri Müdürlüğü",
+                "Haber_Kaynagi": "Beykoz Anlık",
+                "Sayı": 3,
+                "Ayrıntı": "Yol çalışması hakkında şikayetler",
+                "Kayit_Zamani": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            },
+            {
+                "Tarih": date.today() - timedelta(days=1),
+                "Müdürlük": "Temizlik İşleri Müdürlüğü",
+                "Haber_Kaynagi": "Beykoz Burada",
+                "Sayı": 2,
+                "Ayrıntı": "Çöp toplama saatleri ile ilgili öneriler",
+                "Kayit_Zamani": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            }
+        ]
+        
+        ornek_df = pd.DataFrame(ornek_veriler)
+        df = pd.concat([df, ornek_df], ignore_index=True)
+        
+        if db.save(df):
+            st.success("✅ Örnek veriler eklendi!")
+            st.rerun()
 
-st.caption(f"v1.3 • {datetime.now().strftime('%d.%m.%Y %H:%M')}")
+# ===== FOOTER =====
+st.markdown("---")
+st.caption(f"© 2026 MAB ile geliştirildi. • Railway.app • {datetime.now().strftime('%H:%M:%S')}")
