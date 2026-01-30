@@ -1,11 +1,6 @@
-# Şifreler ve ayarlar
 .streamlit/
-
-# Veritabanı
 *.csv
 .data/
-
-# Python geçici dosyaları
 __pycache__/
 *.pyc
 *.pyo
@@ -14,13 +9,10 @@ __pycache__/
 .env
 .venv
 venv/
-
-# İşletim sistemi dosyaları
 .DS_Store
 Thumbs.db
-
-# IDE dosyaları
 .vscode/
 .idea/
 *.swp
 *.swo
+*.log
